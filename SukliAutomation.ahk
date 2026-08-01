@@ -1,12 +1,23 @@
 ; ============================================================
-; SUKLI AUTOMATION v2.0 - Enhanced Version
+; SUKLI AUTOMATION v2.0 - Image Detection for Passenger Types
 ; ============================================================
-; IMPROVEMENTS:
-;   - Auto-detects passenger type (Regular/Student/Senior)
-;   - Only shows Student/Senior if detected, otherwise Regular
-;   - Better pixel detection with tolerance
-;   - GUI status window
-;   - Auto-calibration for denomination positions
+; 
+; HOW IT WORKS:
+;   1. Detects sukli screen using PIXEL COLOR
+;   2. Detects passenger type using IMAGE DETECTION:
+;      - "Student" or "Studyante" text -> Student
+;      - "Senior" text -> Senior
+;      - Neither found -> Regular (default)
+;   3. Uses images for: reset_arrow.png, check_button.png,
+;      type_student.png, type_senior.png
+;   4. Calculates fare and sukli automatically
+;   5. Performs the sukli using COORDINATES
+;
+; IMAGES NEEDED (4 TOTAL):
+;   - reset_arrow.png   (red arrow button)
+;   - check_button.png  (check/sukli button)
+;   - type_student.png  ("Student" or "Studyante" text)
+;   - type_senior.png   ("Senior" text)
 ; ============================================================
 
 #NoEnv
@@ -253,6 +264,7 @@ CheckSukliScreen:
     ; ============================================================
     ; DETECT SUKLI SCREEN (Pixel Color with Tolerance)
     ; ============================================================
+    ; REPLACE 0xFFFFFF with your actual color
     SukliCheckX := WinX + Round(WinW * 0.50)
     SukliCheckY := WinY + Round(WinH * 0.30)
     PixelGetColor, pixelColor, SukliCheckX, SukliCheckY, RGB
@@ -281,7 +293,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     Sleep, 300
     
     ; ============================================================
-    ; STEP 1: CLICK RESET BUTTON
+    ; STEP 1: CLICK RESET BUTTON (Image Detection)
     ; ============================================================
     ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%reset_arrow.png
     if (ErrorLevel = 0) {
@@ -294,10 +306,9 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     }
     
     ; ============================================================
-    ; STEP 2: AUTO-DETECT PASSENGER TYPE
+    ; STEP 2: DETECT PASSENGER TYPE (Image Detection)
     ; ============================================================
-    ; Check if "Student" or "Studyante" appears on the screen
-    ; If neither is found, default to "Regular"
+    ; Check for Student label first
     passengerType := "Regular"
     
     UpdateGUI("DETECTED", "Detecting passenger type...", "Looking for Student/Senior labels")
@@ -311,7 +322,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
         PlaySound(1000, 100)
         Sleep, 300
     } else {
-        ; Search for Senior label (English or Tagalog)
+        ; Search for Senior label
         ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%type_senior.png
         if (ErrorLevel = 0) {
             passengerType := "Senior"
@@ -319,7 +330,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
             PlaySound(1000, 100)
             Sleep, 300
         } else {
-            ; No Student or Senior label found = Regular
+            ; No Student or Senior found = Regular
             passengerType := "Regular"
             UpdateGUI("DETECTED", "Type: Regular (default)", "Proceeding...")
         }
@@ -328,7 +339,8 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     ; ============================================================
     ; STEP 3: GET PASSENGER DETAILS FROM USER
     ; ============================================================
-    ; Destination
+    
+    ; Destination selection
     MsgBox, 64, Step 1 of 3, Enter Destination:`n1. Bagumbayan/San Jose`n2. Matungao`n3. Panginay Guiguinto`n4. Panginay Balagtas`n5. Wawa`n6. Tuktukan`n7. Maysantol`n8. San Nicolas`n9. Pitpitan`n10. Mambog`n11. Matimbo`n12. Panasahan`n13. Bagna`n14. Atlag`n15. San Juan/Sto. Rosario
     
     InputBox, destChoice, Destination, Enter destination number (1-15):, , 200, 150
@@ -337,6 +349,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
         return
     }
     
+    ; Map destination number to name
     destMap := []
     destMap[1] := "Bagumbayan/San Jose"
     destMap[2] := "Matungao"
@@ -370,11 +383,10 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     }
     UpdateGUI("DETECTED", "Passengers: " . paxCount, "Proceeding...")
     
-    ; Passenger type is already auto-detected!
-    ; The user doesn't need to input it
-    MsgBox, 64, Passenger Type Detected, Auto-detected passenger type: %passengerType%`n`nIf this is incorrect, please click Cancel and check your screenshots.
+    ; Show auto-detected type
+    MsgBox, 64, Passenger Type Detected, Auto-detected passenger type: %passengerType%`n`nIf this is incorrect, please check your screenshots in the sukli_images folder.
     
-    ; Payment
+    ; Payment amount
     MsgBox, 64, Step 3 of 3, Enter Payment Amount:`n20, 50, 100, 200, 500, 1000
     
     InputBox, payment, Payment, Enter payment amount:, , 200, 150
@@ -386,7 +398,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     UpdateGUI("DETECTED", "Payment: ₱" . payment, "Calculating...")
     
     ; ============================================================
-    ; STEP 4: CALCULATE
+    ; STEP 4: CALCULATE FARE AND SUKLI
     ; ============================================================
     barangays := RouteData[RouteName]
     if (barangays = "") {
@@ -394,6 +406,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
         return
     }
     
+    ; Find the destination index
     destIndex := 0
     Loop, % barangays.Length() {
         if (barangays[A_Index] = destination) {
@@ -406,7 +419,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
         return
     }
     
-    ; Use the auto-detected passenger type
+    ; Get base fare based on passenger type
     if (passengerType = "Student") {
         baseFare := studentFare
     } else if (passengerType = "Senior") {
@@ -415,6 +428,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
         baseFare := regularFare
     }
     
+    ; Calculate total fare
     if (destIndex > minUnits) {
         extra := destIndex - minUnits
         perPassengerFare := baseFare + (extra * extraFare)
@@ -430,10 +444,11 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
         return
     }
     
+    ; Calculate sukli breakdown
     sukliBreakdown := CalculateBreakdown(sukli)
     
     ; ============================================================
-    ; STEP 5: SHOW SUMMARY
+    ; STEP 5: SHOW SUMMARY AND CONFIRM
     ; ============================================================
     MsgBox, 68, Sukli Automation - Confirm,
     (LTrim
@@ -445,6 +460,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
         Total Fare: ₱%totalFare%
         Sukli: ₱%sukli%
         Breakdown: %sukliBreakdown%
+        Click Order: Highest to lowest
     )
     
     IfMsgBox, No
@@ -460,7 +476,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     PerformSukli(WinX, WinY, WinW, WinH, sukliBreakdown)
     
     ; ============================================================
-    ; STEP 7: CLICK CHECK BUTTON
+    ; STEP 7: CLICK CHECK BUTTON (Image Detection)
     ; ============================================================
     UpdateGUI("EXECUTING", "Clicking check button...", "Almost done!")
     PlaySound(1200, 150)
@@ -481,7 +497,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
 }
 
 ; ============================================================
-; CALCULATE SUKLI BREAKDOWN
+; CALCULATE SUKLI BREAKDOWN (Highest to Lowest)
 ; ============================================================
 CalculateBreakdown(amount) {
     global Denominations
@@ -489,9 +505,11 @@ CalculateBreakdown(amount) {
     breakdown := ""
     remaining := amount
     
+    ; Loop through denominations from highest to lowest
     for index, denom in Denominations {
         count := floor(remaining / denom)
         if (count > 0) {
+            ; Add this denomination 'count' times to the breakdown
             loop, %count% {
                 if (breakdown != "") {
                     breakdown .= ","
@@ -506,19 +524,17 @@ CalculateBreakdown(amount) {
 }
 
 ; ============================================================
-; PERFORM SUKLI
+; PERFORM SUKLI (Coordinate-Based)
 ; ============================================================
 PerformSukli(WinX, WinY, WinW, WinH, breakdown) {
     global
     
+    Sleep, 500
+    
+    ; Split the breakdown
     StringSplit, denomArray, breakdown, `,
     
-    IniRead, calX, %ConfigFile%, DenomPositions, 50_X, 0.30
-    IniRead, calY, %ConfigFile%, DenomPositions, 50_Y, 0.40
-    if (calX != 0.30 or calY != 0.40) {
-        DenomPositions[50] := { x: calX, y: calY }
-    }
-    
+    ; Click each denomination in order (already highest to lowest)
     Loop, % denomArray0 {
         denom := denomArray%A_Index%
         
