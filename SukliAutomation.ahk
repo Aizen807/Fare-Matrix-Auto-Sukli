@@ -2,13 +2,11 @@
 ; SUKLI AUTOMATION v2.0 - Enhanced Version
 ; ============================================================
 ; IMPROVEMENTS:
+;   - Auto-detects passenger type (Regular/Student/Senior)
+;   - Only shows Student/Senior if detected, otherwise Regular
 ;   - Better pixel detection with tolerance
+;   - GUI status window
 ;   - Auto-calibration for denomination positions
-;   - GUI status window instead of just tray tips
-;   - Smarter error handling and retries
-;   - Configurable detection sensitivity
-;   - Hotkey to test/calibrate positions
-;   - Sound feedback for each step
 ; ============================================================
 
 #NoEnv
@@ -98,7 +96,7 @@ minUnits := 4
 Denominations := [50, 20, 10, 5, 1]
 
 ; ============================================================
-; DENOMINATION BUTTON POSITIONS (Auto-calibrated)
+; DENOMINATION BUTTON POSITIONS
 ; ============================================================
 DenomPositions := {}
 DenomPositions[50] := { x: 0.30, y: 0.40 }
@@ -209,7 +207,6 @@ CalibratePositions:
     UpdateGUI("Calibrating", "Click the ₱50 button...", "Move mouse and press F5")
     MsgBox, 64, Calibration, Move your mouse over the ₱50 button`nand press F5 to capture its position.
     
-    ; Wait for F5
     Hotkey, F5, CapturePosition, On
     return
     
@@ -217,19 +214,15 @@ CapturePosition:
     Hotkey, F5, Off
     MouseGetPos, mouseX, mouseY
     
-    ; Get Roblox window position
     WinGetPos, WinX, WinY, WinW, WinH, %WinTitle%
     
-    ; Calculate percentage
     if (WinW > 0 and WinH > 0) {
         relX := (mouseX - WinX) / WinW
         relY := (mouseY - WinY) / WinH
         
-        ; Save to config
         IniWrite, %relX%, %ConfigFile%, DenomPositions, 50_X
         IniWrite, %relY%, %ConfigFile%, DenomPositions, 50_Y
         
-        ; Update position
         DenomPositions[50] := { x: relX, y: relY }
         
         UpdateGUI("Calibrated", "₱50 position saved", "X: " . Round(relX, 2) . " Y: " . Round(relY, 2))
@@ -246,14 +239,12 @@ CheckSukliScreen:
         return
     }
 
-    ; Check if Roblox is the active window
     WinGet, activeID, ID, A
     WinGet, robloxID, ID, %WinTitle%
     if (activeID != robloxID) {
         return
     }
 
-    ; Get Roblox window position
     WinGetPos, WinX, WinY, WinW, WinH, %WinTitle%
     if (WinW < 100 or WinH < 100) {
         return
@@ -266,15 +257,12 @@ CheckSukliScreen:
     SukliCheckY := WinY + Round(WinH * 0.30)
     PixelGetColor, pixelColor, SukliCheckX, SukliCheckY, RGB
     
-    ; Check if color matches with tolerance
     if (ColorMatch(pixelColor, SukliColor, ColorTolerance)) {
         UpdateGUI("DETECTED", "Sukli screen detected!", "Reading passenger info...")
         PlaySound(1500, 100)
         SukliScreenDetected(WinX, WinY, WinW, WinH)
-        ; Wait a bit before checking again
         Sleep, 2000
     } else {
-        ; Update GUI occasionally
         static lastUpdate := 0
         if (A_TickCount - lastUpdate > 2000) {
             UpdateGUI("RUNNING", "Waiting for sukli screen...", "Route: " . RouteName)
@@ -293,7 +281,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     Sleep, 300
     
     ; ============================================================
-    ; STEP 1: CLICK RESET BUTTON (Image Detection)
+    ; STEP 1: CLICK RESET BUTTON
     ; ============================================================
     ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%reset_arrow.png
     if (ErrorLevel = 0) {
@@ -306,14 +294,42 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     }
     
     ; ============================================================
-    ; STEP 2: GET PASSENGER DETAILS (With timeout and retry)
+    ; STEP 2: AUTO-DETECT PASSENGER TYPE
+    ; ============================================================
+    ; Check if "Student" or "Studyante" appears on the screen
+    ; If neither is found, default to "Regular"
+    passengerType := "Regular"
+    
+    UpdateGUI("DETECTED", "Detecting passenger type...", "Looking for Student/Senior labels")
+    Sleep, 200
+    
+    ; Search for Student label (English or Tagalog)
+    ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%type_student.png
+    if (ErrorLevel = 0) {
+        passengerType := "Student"
+        UpdateGUI("DETECTED", "Type: Student detected", "Proceeding...")
+        PlaySound(1000, 100)
+        Sleep, 300
+    } else {
+        ; Search for Senior label (English or Tagalog)
+        ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%type_senior.png
+        if (ErrorLevel = 0) {
+            passengerType := "Senior"
+            UpdateGUI("DETECTED", "Type: Senior detected", "Proceeding...")
+            PlaySound(1000, 100)
+            Sleep, 300
+        } else {
+            ; No Student or Senior label found = Regular
+            passengerType := "Regular"
+            UpdateGUI("DETECTED", "Type: Regular (default)", "Proceeding...")
+        }
+    }
+    
+    ; ============================================================
+    ; STEP 3: GET PASSENGER DETAILS FROM USER
     ; ============================================================
     ; Destination
-    retryCount := 0
-    maxRetries := 3
-    
-    ; Destination
-    MsgBox, 64, Step 1 of 4, Enter Destination:`n1. Bagumbayan/San Jose`n2. Matungao`n3. Panginay Guiguinto`n4. Panginay Balagtas`n5. Wawa`n6. Tuktukan`n7. Maysantol`n8. San Nicolas`n9. Pitpitan`n10. Mambog`n11. Matimbo`n12. Panasahan`n13. Bagna`n14. Atlag`n15. San Juan/Sto. Rosario
+    MsgBox, 64, Step 1 of 3, Enter Destination:`n1. Bagumbayan/San Jose`n2. Matungao`n3. Panginay Guiguinto`n4. Panginay Balagtas`n5. Wawa`n6. Tuktukan`n7. Maysantol`n8. San Nicolas`n9. Pitpitan`n10. Mambog`n11. Matimbo`n12. Panasahan`n13. Bagna`n14. Atlag`n15. San Juan/Sto. Rosario
     
     InputBox, destChoice, Destination, Enter destination number (1-15):, , 200, 150
     if ErrorLevel {
@@ -354,21 +370,12 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     }
     UpdateGUI("DETECTED", "Passengers: " . paxCount, "Proceeding...")
     
-    ; Passenger type
-    MsgBox, 64, Step 3 of 4, Enter Passenger Type:`n1. Regular`n2. Student`n3. Senior
-    
-    InputBox, typeChoice, Passenger Type, Enter type (1-3):, , 200, 150
-    if ErrorLevel return
-    if (typeChoice < 1 or typeChoice > 3) {
-        MsgBox, 16, Error, Invalid passenger type!
-        return
-    }
-    typeMap := ["Regular", "Student", "Senior"]
-    passengerType := typeMap[typeChoice]
-    UpdateGUI("DETECTED", "Type: " . passengerType, "Proceeding...")
+    ; Passenger type is already auto-detected!
+    ; The user doesn't need to input it
+    MsgBox, 64, Passenger Type Detected, Auto-detected passenger type: %passengerType%`n`nIf this is incorrect, please click Cancel and check your screenshots.
     
     ; Payment
-    MsgBox, 64, Step 4 of 4, Enter Payment Amount:`n20, 50, 100, 200, 500, 1000
+    MsgBox, 64, Step 3 of 3, Enter Payment Amount:`n20, 50, 100, 200, 500, 1000
     
     InputBox, payment, Payment, Enter payment amount:, , 200, 150
     if ErrorLevel return
@@ -379,7 +386,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     UpdateGUI("DETECTED", "Payment: ₱" . payment, "Calculating...")
     
     ; ============================================================
-    ; STEP 3: CALCULATE
+    ; STEP 4: CALCULATE
     ; ============================================================
     barangays := RouteData[RouteName]
     if (barangays = "") {
@@ -399,6 +406,7 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
         return
     }
     
+    ; Use the auto-detected passenger type
     if (passengerType = "Student") {
         baseFare := studentFare
     } else if (passengerType = "Senior") {
@@ -425,14 +433,14 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     sukliBreakdown := CalculateBreakdown(sukli)
     
     ; ============================================================
-    ; STEP 4: SHOW SUMMARY
+    ; STEP 5: SHOW SUMMARY
     ; ============================================================
     MsgBox, 68, Sukli Automation - Confirm,
     (LTrim
         Route: %RouteName%
         Destination: %destination% (Unit %destIndex%)
         Passengers: %paxCount%
-        Type: %passengerType%
+        Type: %passengerType% (Auto-detected)
         Payment: ₱%payment%
         Total Fare: ₱%totalFare%
         Sukli: ₱%sukli%
@@ -447,12 +455,12 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
     Sleep, 500
     
     ; ============================================================
-    ; STEP 5: PERFORM THE SUKLI
+    ; STEP 6: PERFORM THE SUKLI
     ; ============================================================
     PerformSukli(WinX, WinY, WinW, WinH, sukliBreakdown)
     
     ; ============================================================
-    ; STEP 6: CLICK CHECK BUTTON
+    ; STEP 7: CLICK CHECK BUTTON
     ; ============================================================
     UpdateGUI("EXECUTING", "Clicking check button...", "Almost done!")
     PlaySound(1200, 150)
@@ -498,14 +506,13 @@ CalculateBreakdown(amount) {
 }
 
 ; ============================================================
-; PERFORM SUKLI (Coordinate-Based)
+; PERFORM SUKLI
 ; ============================================================
 PerformSukli(WinX, WinY, WinW, WinH, breakdown) {
     global
     
     StringSplit, denomArray, breakdown, `,
     
-    ; Get calibration positions from config if available
     IniRead, calX, %ConfigFile%, DenomPositions, 50_X, 0.30
     IniRead, calY, %ConfigFile%, DenomPositions, 50_Y, 0.40
     if (calX != 0.30 or calY != 0.40) {
@@ -524,7 +531,6 @@ PerformSukli(WinX, WinY, WinW, WinH, breakdown) {
             PlaySound(800, 50)
             Sleep, 300
             
-            ; Update GUI with progress
             UpdateGUI("EXECUTING", "Clicked ₱" . denom, "Progress: " . A_Index . "/" . denomArray0)
         }
     }
