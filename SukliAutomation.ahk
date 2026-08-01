@@ -1,14 +1,19 @@
 ; ============================================================
-; SUKLI AUTOMATION - Full Auto-Detection
+; SUKLI AUTOMATION - Full Auto-Detection with Minimal Images
 ; ============================================================
-; Reads from the game screen:
-;   - Destination (e.g., "San Jose - Wawa")
-;   - Passenger Count (e.g., "Isa", "Dalawa")
-;   - Passenger Type (Regular/Student/Senior)
-;   - Payment Amount (e.g., ₱100)
+; 
+; HOW IT WORKS:
+;   1. Detects sukli screen using PIXEL COLOR (no image needed)
+;   2. Uses IMAGE DETECTION ONLY for buttons (reset_arrow.png, check_button.png)
+;   3. Uses BUILT-IN FARE MATRIX (no images for destinations, counts, etc.)
+;   4. Calculates fare and sukli automatically
+;   5. Performs the sukli using COORDINATES (no images for denominations)
 ;
-; Calculates fare and sukli automatically!
-; Clicks highest denomination FIRST!
+; FILES NEEDED (ONLY 2 IMAGES):
+;   - reset_arrow.png   (red arrow button)
+;   - check_button.png  (check/sukli button)
+;
+; NO OTHER IMAGES REQUIRED!
 ; ============================================================
 
 #NoEnv
@@ -42,76 +47,21 @@ if (FileExist(ConfigFile)) {
 }
 
 ; ============================================================
-; LOAD ROUTE DATA
+; ROUTE DATA (Built-in - No Images Needed!)
 ; ============================================================
 RouteData := {}
-IniRead, routeSection, %ConfigFile%, Routes
-Loop, Parse, routeSection, `n, `r
-{
-    if (A_LoopField = "") {
-        continue
-    }
-    StringSplit, parts, A_LoopField, =
-    if (parts0 >= 2) {
-        routeName := parts1
-        routeList := parts2
-        barangays := []
-        StringSplit, barArray, routeList, `,
-        Loop, % barArray0 {
-            barangays[A_Index] := Trim(barArray%A_Index%)
-        }
-        RouteData[routeName] := barangays
-    }
-}
+RouteData["Balagtas"] := ["Bagumbayan/San Jose", "Matungao", "Panginay Guiguinto", "Panginay Balagtas", "Wawa"]
+RouteData["Guiguinto"] := ["Bagumbayan/San Jose", "Matungao", "Tuktukan"]
+RouteData["Malolos"] := ["Bagumbayan/San Jose", "Maysantol", "San Nicolas", "Pitpitan", "Mambog", "Matimbo", "Panasahan", "Bagna", "Atlag", "San Juan/Sto. Rosario"]
 
 ; ============================================================
-; LOAD FARE SETTINGS
+; FARE SETTINGS
 ; ============================================================
-IniRead, regularFare, %ConfigFile%, Fares, Regular, 13
-IniRead, studentFare, %ConfigFile%, Fares, Student, 11
-IniRead, seniorFare, %ConfigFile%, Fares, Senior, 11
-IniRead, extraFare, %ConfigFile%, Fares, Extra, 2
-IniRead, minUnits, %ConfigFile%, Fares, MinimumUnits, 4
-
-; ============================================================
-; IMAGE DETECTION CONFIG
-; ============================================================
-ImageDir := A_ScriptDir . "\sukli_images\"
-
-; Number images (1-10)
-NumberImages := {}
-Loop, 10 {
-    NumberImages[A_Index] := "count_" . A_Index . ".png"
-}
-
-; Type images
-TypeImages := {}
-TypeImages["Regular"] := "type_regular.png"
-TypeImages["Student"] := "type_student.png"
-TypeImages["Senior"] := "type_senior.png"
-
-; Payment images
-PaymentImages := {}
-PaymentImages["20"] := "payment_20.png"
-PaymentImages["50"] := "payment_50.png"
-PaymentImages["100"] := "payment_100.png"
-PaymentImages["200"] := "payment_200.png"
-PaymentImages["500"] := "payment_500.png"
-PaymentImages["1000"] := "payment_1000.png"
-
-; Destination images
-DestinationImages := {}
-IniRead, destSection, %ConfigFile%, Destinations
-Loop, Parse, destSection, `n, `r
-{
-    if (A_LoopField = "") {
-        continue
-    }
-    StringSplit, parts, A_LoopField, =
-    if (parts0 >= 2) {
-        DestinationImages[parts1] := parts2
-    }
-}
+regularFare := 13
+studentFare := 11
+seniorFare := 11
+extraFare := 2
+minUnits := 4
 
 ; ============================================================
 ; SUKLI DENOMINATIONS (Highest to Lowest)
@@ -122,9 +72,6 @@ Denominations := [50, 20, 10, 5, 1]
 ; DENOMINATION BUTTON POSITIONS (Percentage-based)
 ; ============================================================
 ; !!! IMPORTANT: Adjust these if your game UI is different !!!
-; These are the positions where the 50, 20, 10, 5, 1 buttons appear
-; X% is from the left of the Roblox window
-; Y% is from the top of the Roblox window
 ; ============================================================
 DenomPositions := {}
 DenomPositions[50] := { x: 0.30, y: 0.40 }
@@ -138,11 +85,7 @@ DenomPositions[1]  := { x: 0.70, y: 0.40 }
 ; ============================================================
 macroRunning := false
 WinTitle := "Roblox"
-
-DetectedDestination := ""
-DetectedPassengerCount := 0
-DetectedPassengerType := "Regular"
-DetectedPayment := 0
+ImageDir := A_ScriptDir . "\sukli_images\"
 
 ; ============================================================
 ; HOTKEYS
@@ -167,7 +110,7 @@ return
 F2::
     macroRunning := !macroRunning
     if (macroRunning) {
-        TrayTip, Sukli Automation, Macro STARTED`nRoute: %RouteName%, 3
+        TrayTip, Sukli Automation, Macro STARTED`nRoute: %RouteName%`nMonitoring for sukli screen..., 3
         SetTimer, CheckSukliScreen, 500
     } else {
         TrayTip, Sukli Automation, Macro STOPPED, 3
@@ -180,7 +123,7 @@ F3::
     WinActivate, %WinTitle%
     WinWaitActive, %WinTitle%,, 3
     if ErrorLevel {
-        MsgBox, 16, Error, Roblox window not found!
+        MsgBox, 16, Error, Roblox window not found!`nMake sure Roblox is running.
         return
     }
     WinMove, %WinTitle%,, 0, 0, %ScreenWidth%, %ScreenHeight%
@@ -198,26 +141,28 @@ F4::
 return
 
 ; ============================================================
-; MAIN LOOP - Checks for Sukli Screen
+; MAIN LOOP - Checks for Sukli Screen (Pixel Color Detection)
 ; ============================================================
 CheckSukliScreen:
     if (!macroRunning) {
         return
     }
 
+    ; Check if Roblox is the active window
     WinGet, activeID, ID, A
     WinGet, robloxID, ID, %WinTitle%
     if (activeID != robloxID) {
         return
     }
 
+    ; Get Roblox window position
     WinGetPos, WinX, WinY, WinW, WinH, %WinTitle%
     if (WinW < 100 or WinH < 100) {
         return
     }
 
     ; ============================================================
-    ; DETECT SUKLI SCREEN (Pixel Color)
+    ; DETECT SUKLI SCREEN (Pixel Color - NO IMAGE NEEDED!)
     ; ============================================================
     ; REPLACE 0xFFFFFF with the actual color of "Naghihintay ng sukli" text
     ; Use AutoHotkey's Window Spy tool to find the correct color
@@ -234,143 +179,105 @@ CheckSukliScreen:
     
     if (pixelColor = 0xFFFFFF) {
         TrayTip, Sukli Automation, Sukli screen detected!`nReading info..., 2
-        ReadAllInfo(WinX, WinY, WinW, WinH)
+        SukliScreenDetected(WinX, WinY, WinW, WinH)
     }
 return
 
 ; ============================================================
-; READ ALL INFORMATION FROM GAME SCREEN
+; SUKLI SCREEN DETECTED - Ask User for Details
 ; ============================================================
-ReadAllInfo(WinX, WinY, WinW, WinH) {
+SukliScreenDetected(WinX, WinY, WinW, WinH) {
     global
     
-    ; Reset detected values
-    DetectedDestination := ""
-    DetectedPassengerCount := 0
-    DetectedPassengerType := "Regular"
-    DetectedPayment := 0
-    
     ; ============================================================
-    ; STEP 1: CHECK FOR RESET BUTTON (Red Arrow)
+    ; STEP 1: CLICK RESET BUTTON (Image Detection)
     ; ============================================================
     ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%reset_arrow.png
     if (ErrorLevel = 0) {
         MouseClick, left, foundX + 10, foundY + 10, 1, 0
         Sleep, 500
         TrayTip, Sukli Automation, Reset clicked!, 2
-    }
-    
-    ; ============================================================
-    ; STEP 2: DETECT DESTINATION
-    ; ============================================================
-    for destName, destImage in DestinationImages {
-        ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%%destImage%
-        if (ErrorLevel = 0) {
-            DetectedDestination := destName
-            TrayTip, Sukli Automation, Destination: %DetectedDestination%, 2
-            break
-        }
-    }
-    
-    ; ============================================================
-    ; STEP 3: DETECT PASSENGER COUNT (Number 1-10)
-    ; ============================================================
-    Loop, 10 {
-        countNum := A_Index
-        countImage := NumberImages[countNum]
-        ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%%countImage%
-        if (ErrorLevel = 0) {
-            DetectedPassengerCount := countNum
-            TrayTip, Sukli Automation, Passengers: %DetectedPassengerCount%, 2
-            break
-        }
-    }
-    
-    ; ============================================================
-    ; STEP 4: DETECT PASSENGER TYPE
-    ; ============================================================
-    for typeName, typeImage in TypeImages {
-        ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%%typeImage%
-        if (ErrorLevel = 0) {
-            DetectedPassengerType := typeName
-            TrayTip, Sukli Automation, Type: %DetectedPassengerType%, 2
-            break
-        }
-    }
-    
-    ; ============================================================
-    ; STEP 5: DETECT PAYMENT AMOUNT
-    ; ============================================================
-    for paymentValue, paymentImage in PaymentImages {
-        ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%%paymentImage%
-        if (ErrorLevel = 0) {
-            DetectedPayment := paymentValue
-            TrayTip, Sukli Automation, Payment: ₱%DetectedPayment%, 2
-            break
-        }
-    }
-    
-    ; ============================================================
-    ; STEP 6: VERIFY AND CALCULATE
-    ; ============================================================
-    if (DetectedDestination != "" and DetectedPassengerCount > 0 and DetectedPayment > 0) {
-        ; Calculate fare
-        totalFare := CalculateFare(DetectedDestination, DetectedPassengerCount, DetectedPassengerType)
-        sukli := DetectedPayment - totalFare
-        
-        if (sukli >= 0) {
-            ; Calculate sukli breakdown (highest to lowest)
-            sukliBreakdown := CalculateBreakdown(sukli)
-            
-            ; Show detailed info in a popup
-            MsgBox, 64, Sukli Automation - Info Detected,
-            (LTrim
-                Route: %RouteName%
-                Destination: %DetectedDestination%
-                Passengers: %DetectedPassengerCount%
-                Type: %DetectedPassengerType%
-                Payment: ₱%DetectedPayment%
-                Total Fare: ₱%totalFare%
-                Sukli: ₱%sukli%
-                Breakdown: %sukliBreakdown%
-                Click Order: Highest to lowest
-            )
-            
-            ; ============================================================
-            ; STEP 7: PERFORM THE SUKLI (Highest to Lowest)
-            ; ============================================================
-            PerformSukli(WinX, WinY, WinW, WinH, sukliBreakdown)
-            
-            ; ============================================================
-            ; STEP 8: CLICK THE CHECK BUTTON
-            ; ============================================================
-            ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%check_button.png
-            if (ErrorLevel = 0) {
-                MouseClick, left, foundX + 10, foundY + 10, 1, 0
-                Sleep, 500
-                SoundBeep, 1000, 200
-                TrayTip, Sukli Automation, Sukli complete! ✅, 3
-            } else {
-                TrayTip, Sukli Automation, Check button not found!, 3
-            }
-        } else {
-            MsgBox, 16, Error, Payment is less than fare!`nFare: ₱%totalFare%`nPayment: ₱%DetectedPayment%
-        }
     } else {
-        MsgBox, 16, Error, Could not detect all information!`nDestination: %DetectedDestination%`nCount: %DetectedPassengerCount%`nPayment: %DetectedPayment%
+        TrayTip, Sukli Automation, Reset button not found.`nContinuing..., 2
     }
-}
-
-; ============================================================
-; CALCULATE FARE
-; ============================================================
-CalculateFare(destination, passengerCount, passengerType) {
-    global
     
+    ; ============================================================
+    ; STEP 2: GET PASSENGER DETAILS FROM USER
+    ; ============================================================
+    ; User inputs the passenger details manually (quick and easy!)
+    ; This avoids the need for dozens of images
+    ; ============================================================
+    
+    ; Destination selection
+    MsgBox, 64, Step 1 of 4, Enter Destination:`n1. Bagumbayan/San Jose`n2. Matungao`n3. Panginay Guiguinto`n4. Panginay Balagtas`n5. Wawa`n6. Tuktukan`n7. Maysantol`n8. San Nicolas`n9. Pitpitan`n10. Mambog`n11. Matimbo`n12. Panasahan`n13. Bagna`n14. Atlag`n15. San Juan/Sto. Rosario
+    
+    InputBox, destChoice, Destination, Enter destination number (1-15):, , 200, 150
+    if ErrorLevel {
+        return
+    }
+    
+    ; Map destination number to name
+    destMap := []
+    destMap[1] := "Bagumbayan/San Jose"
+    destMap[2] := "Matungao"
+    destMap[3] := "Panginay Guiguinto"
+    destMap[4] := "Panginay Balagtas"
+    destMap[5] := "Wawa"
+    destMap[6] := "Tuktukan"
+    destMap[7] := "Maysantol"
+    destMap[8] := "San Nicolas"
+    destMap[9] := "Pitpitan"
+    destMap[10] := "Mambog"
+    destMap[11] := "Matimbo"
+    destMap[12] := "Panasahan"
+    destMap[13] := "Bagna"
+    destMap[14] := "Atlag"
+    destMap[15] := "San Juan/Sto. Rosario"
+    
+    destination := destMap[destChoice]
+    if (destination = "") {
+        MsgBox, 16, Error, Invalid destination choice!
+        return
+    }
+    
+    ; Passenger count
+    InputBox, paxCount, Passenger Count, Enter number of passengers (1-10):, , 200, 150
+    if ErrorLevel return
+    if (paxCount < 1 or paxCount > 10) {
+        MsgBox, 16, Error, Invalid passenger count! (1-10)
+        return
+    }
+    
+    ; Passenger type
+    MsgBox, 64, Step 3 of 4, Enter Passenger Type:`n1. Regular`n2. Student`n3. Senior
+    
+    InputBox, typeChoice, Passenger Type, Enter type (1-3):, , 200, 150
+    if ErrorLevel return
+    if (typeChoice < 1 or typeChoice > 3) {
+        MsgBox, 16, Error, Invalid passenger type!
+        return
+    }
+    typeMap := ["Regular", "Student", "Senior"]
+    passengerType := typeMap[typeChoice]
+    
+    ; Payment amount
+    MsgBox, 64, Step 4 of 4, Enter Payment Amount:`n20, 50, 100, 200, 500, 1000
+    
+    InputBox, payment, Payment, Enter payment amount:, , 200, 150
+    if ErrorLevel return
+    if (payment != "20" and payment != "50" and payment != "100" and payment != "200" and payment != "500" and payment != "1000") {
+        MsgBox, 16, Error, Invalid payment amount!`nUse: 20, 50, 100, 200, 500, or 1000
+        return
+    }
+    
+    ; ============================================================
+    ; STEP 3: CALCULATE FARE AND SUKLI
+    ; ============================================================
     ; Get the barangay list for the current route
     barangays := RouteData[RouteName]
     if (barangays = "") {
-        return 13
+        MsgBox, 16, Error, Route not found! Check config.
+        return
     }
     
     ; Find the destination index
@@ -381,9 +288,9 @@ CalculateFare(destination, passengerCount, passengerType) {
             break
         }
     }
-    
     if (destIndex = 0) {
-        return 13
+        MsgBox, 16, Error, Destination not found on this route!
+        return
     }
     
     ; Get base fare based on passenger type
@@ -396,7 +303,6 @@ CalculateFare(destination, passengerCount, passengerType) {
     }
     
     ; Calculate total fare
-    ; Minimum units = 4, extra = destIndex - minUnits (if positive)
     if (destIndex > minUnits) {
         extra := destIndex - minUnits
         perPassengerFare := baseFare + (extra * extraFare)
@@ -404,7 +310,53 @@ CalculateFare(destination, passengerCount, passengerType) {
         perPassengerFare := baseFare
     }
     
-    return perPassengerFare * passengerCount
+    totalFare := perPassengerFare * paxCount
+    sukli := payment - totalFare
+    
+    if (sukli < 0) {
+        MsgBox, 16, Error, Payment is less than fare!`nFare: ₱%totalFare%`nPayment: ₱%payment%
+        return
+    }
+    
+    ; Calculate sukli breakdown
+    sukliBreakdown := CalculateBreakdown(sukli)
+    
+    ; ============================================================
+    ; STEP 4: SHOW SUMMARY AND CONFIRM
+    ; ============================================================
+    MsgBox, 68, Sukli Automation - Confirm,
+    (LTrim
+        Route: %RouteName%
+        Destination: %destination% (Unit %destIndex%)
+        Passengers: %paxCount%
+        Type: %passengerType%
+        Payment: ₱%payment%
+        Total Fare: ₱%totalFare%
+        Sukli: ₱%sukli%
+        Breakdown: %sukliBreakdown%
+        Click Order: Highest to lowest
+    )
+    
+    IfMsgBox, No
+        return
+    
+    ; ============================================================
+    ; STEP 5: PERFORM THE SUKLI
+    ; ============================================================
+    PerformSukli(WinX, WinY, WinW, WinH, sukliBreakdown)
+    
+    ; ============================================================
+    ; STEP 6: CLICK CHECK BUTTON (Image Detection)
+    ; ============================================================
+    ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%check_button.png
+    if (ErrorLevel = 0) {
+        MouseClick, left, foundX + 10, foundY + 10, 1, 0
+        Sleep, 500
+        SoundBeep, 1000, 200
+        TrayTip, Sukli Automation, Sukli complete! ✅, 3
+    } else {
+        TrayTip, Sukli Automation, Check button not found!`nPlease click manually., 3
+    }
 }
 
 ; ============================================================
