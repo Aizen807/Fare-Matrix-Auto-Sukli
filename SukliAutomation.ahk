@@ -1,23 +1,15 @@
 ; ============================================================
-; SUKLI AUTOMATION v2.0 - Image Detection for Passenger Types
+; SUKLI AUTOMATION v3 - GUI Edition (No Emojis)
 ; ============================================================
-; 
-; HOW IT WORKS:
-;   1. Detects sukli screen using PIXEL COLOR
-;   2. Detects passenger type using IMAGE DETECTION:
-;      - "Student" or "Studyante" text -> Student
-;      - "Senior" text -> Senior
-;      - Neither found -> Regular (default)
-;   3. Uses images for: reset_arrow.png, check_button.png,
-;      type_student.png, type_senior.png
-;   4. Calculates fare and sukli automatically
-;   5. Performs the sukli using COORDINATES
-;
-; IMAGES NEEDED (4 TOTAL):
-;   - reset_arrow.png   (red arrow button)
-;   - check_button.png  (check/sukli button)
-;   - type_student.png  ("Student" or "Studyante" text)
-;   - type_senior.png   ("Senior" text)
+; HOTKEYS:
+;   F1  - Show Main GUI
+;   F2  - Toggle auto-detect macro ON/OFF
+;   F3  - Force Roblox into windowed mode
+;   F4  - Emergency stop
+;   F5  - Manual trigger (open entry form)
+;   F6  - Calibrate denomination button positions
+;   F7  - Calibrate sukli-screen detection color
+;   F9  - Show today's totals
 ; ============================================================
 
 #NoEnv
@@ -28,60 +20,38 @@ CoordMode, Pixel, Screen
 CoordMode, Mouse, Screen
 
 ; ============================================================
-; GUI - Status Window
-; ============================================================
-Gui, New, +AlwaysOnTop +ToolWindow, Sukli Automation
-Gui, Add, Text, x10 y10 w200 h20 vStatusText, Status: Ready
-Gui, Add, Text, x10 y35 w200 h20 vInfoText, Press F2 to start
-Gui, Add, Text, x10 y60 w200 h20 vDetectText, Waiting for sukli screen...
-Gui, Add, Button, x10 y85 w80 h25 gStartMacro, Start (F2)
-Gui, Add, Button, x100 y85 w80 h25 gStopMacro, Stop (F4)
-Gui, Add, Button, x190 y85 w80 h25 gCalibrate, Calibrate
-Gui, Show, w280 h120, Sukli Automation
-return
-
-StartMacro:
-    Gosub, F2_Action
-return
-
-StopMacro:
-    Gosub, F4_Action
-return
-
-Calibrate:
-    Gosub, CalibratePositions
-return
-
-; ============================================================
 ; READ CONFIGURATION
 ; ============================================================
 ConfigFile := A_ScriptDir . "\sukli_config.ini"
-
-; Default values
+LogFile := A_ScriptDir . "\sukli_log.csv"
 ScreenWidth := 1920
 ScreenHeight := 1080
 RouteName := "Balagtas"
+SukliColor := "0xFFFFFF"
+SukliCheckRelX := 0.50
+SukliCheckRelY := 0.30
 
-; Detection settings
-SukliColor := 0xFFFFFF
-ColorTolerance := 10
-DetectionInterval := 500
-
-; Read config
 if (FileExist(ConfigFile)) {
     IniRead, tempWidth, %ConfigFile%, Settings, ScreenWidth, 1920
     IniRead, tempHeight, %ConfigFile%, Settings, ScreenHeight, 1080
     IniRead, tempRoute, %ConfigFile%, Settings, Route, Balagtas
     IniRead, tempColor, %ConfigFile%, Settings, SukliColor, 0xFFFFFF
-    IniRead, tempTolerance, %ConfigFile%, Settings, ColorTolerance, 10
+    IniRead, tempCheckX, %ConfigFile%, Settings, SukliCheckRelX, 0.50
+    IniRead, tempCheckY, %ConfigFile%, Settings, SukliCheckRelY, 0.30
     ScreenWidth := tempWidth
     ScreenHeight := tempHeight
     RouteName := tempRoute
     SukliColor := tempColor
-    ColorTolerance := tempTolerance
+    SukliCheckRelX := tempCheckX
+    SukliCheckRelY := tempCheckY
 } else {
     MsgBox, 16, Error, sukli_config.ini not found!`nPlease create it first.
     ExitApp
+}
+
+; Create log file if it doesn't exist
+if (!FileExist(LogFile)) {
+    FileAppend, Timestamp,Route,Destination,Passengers,Type,Payment,Fare,Sukli`n, %LogFile%
 }
 
 ; ============================================================
@@ -102,19 +72,25 @@ extraFare := 2
 minUnits := 4
 
 ; ============================================================
-; SUKLI DENOMINATIONS
+; DENOMINATIONS
 ; ============================================================
 Denominations := [50, 20, 10, 5, 1]
 
-; ============================================================
-; DENOMINATION BUTTON POSITIONS
-; ============================================================
 DenomPositions := {}
-DenomPositions[50] := { x: 0.30, y: 0.40 }
-DenomPositions[20] := { x: 0.40, y: 0.40 }
-DenomPositions[10] := { x: 0.50, y: 0.40 }
-DenomPositions[5]  := { x: 0.60, y: 0.40 }
-DenomPositions[1]  := { x: 0.70, y: 0.40 }
+DenomPositions[50] := {x: 0.30, y: 0.40}
+DenomPositions[20] := {x: 0.40, y: 0.40}
+DenomPositions[10] := {x: 0.50, y: 0.40}
+DenomPositions[5]  := {x: 0.60, y: 0.40}
+DenomPositions[1]  := {x: 0.70, y: 0.40}
+
+; Load calibrated positions
+for i, denom in Denominations {
+    IniRead, savedX, %ConfigFile%, DenomPositions, %denom%_x, NONE
+    IniRead, savedY, %ConfigFile%, DenomPositions, %denom%_y, NONE
+    if (savedX != "NONE" and savedY != "NONE") {
+        DenomPositions[denom] := {x: savedX, y: savedY}
+    }
+}
 
 ; ============================================================
 ; VARIABLES
@@ -122,55 +98,191 @@ DenomPositions[1]  := { x: 0.70, y: 0.40 }
 macroRunning := false
 WinTitle := "Roblox"
 ImageDir := A_ScriptDir . "\sukli_images\"
+g_EntryContext := {}
 
 ; ============================================================
-; FUNCTIONS
+; MAIN GUI
+; ============================================================
+MainGUI:
+    Gui, MainGui:New, +AlwaysOnTop +ToolWindow, Sukli Automation v3
+    Gui, MainGui:Color, 1A2415, 1A2415
+    
+    ; Title
+    Gui, MainGui:Font, s16 cF3B22C bold, Anton
+    Gui, MainGui:Add, Text, x10 y10 w260 h30 Center, Fare Matrix Auto Sukli
+    Gui, MainGui:Font, s9 cC9BE9E, Oswald
+    Gui, MainGui:Add, Text, x10 y40 w260 h20 Center, Diesel N' Steel - Roblox
+
+    ; Status Section
+    Gui, MainGui:Font, s10 cF1E9D2 bold, Oswald
+    Gui, MainGui:Add, Text, x10 y70 w80 h20, Status:
+    Gui, MainGui:Font, s10 cF1E9D2, Oswald
+    Gui, MainGui:Add, Text, x95 y70 w170 h20 vMainStatus, [X] Stopped
+    
+    Gui, MainGui:Font, s9 cC9BE9E, Oswald
+    Gui, MainGui:Add, Text, x10 y95 w80 h20, Route:
+    Gui, MainGui:Font, s9 cF3B22C, Oswald
+    Gui, MainGui:Add, Text, x95 y95 w170 h20 vMainRoute, %RouteName%
+    
+    Gui, MainGui:Add, Text, x10 y120 w80 h20, Detection:
+    Gui, MainGui:Font, s9 c6FA05B, Oswald
+    Gui, MainGui:Add, Text, x95 y120 w170 h20 vMainDetect, [..] Waiting...
+
+    ; Separator
+    Gui, MainGui:Font, s10 c3A4530, Oswald
+    Gui, MainGui:Add, Text, x10 y145 w260 h2 Background3A4530, 
+
+    ; Buttons
+    Gui, MainGui:Font, s11 cFFFFFF bold, Oswald
+    Gui, MainGui:Add, Button, x10 y155 w120 h35 gStartMacro vMainStartBtn, Start (F2)
+    Gui, MainGui:Add, Button, x140 y155 w130 h35 gStopMacro vMainStopBtn, Stop (F4)
+    
+    Gui, MainGui:Font, s9 cFFFFFF, Oswald
+    Gui, MainGui:Add, Button, x10 y200 w80 h30 gManualTrigger, Entry
+    Gui, MainGui:Add, Button, x100 y200 w80 h30 gCalibrateDenom, Calibrate
+    Gui, MainGui:Add, Button, x190 y200 w80 h30 gCalibrateColor, Color
+    Gui, MainGui:Add, Button, x10 y240 w80 h30 gShowTotals, Totals
+    Gui, MainGui:Add, Button, x100 y240 w80 h30 gSelectRoute, Route
+    Gui, MainGui:Add, Button, x190 y240 w80 h30 gSettingsMenu, Settings
+
+    ; Footer
+    Gui, MainGui:Font, s8 c6FA05B, Oswald
+    Gui, MainGui:Add, Text, x10 y280 w260 h15 Center, Press F1 to show this window
+    Gui, MainGui:Font, s7 cC9BE9E, Oswald
+    Gui, MainGui:Add, Text, x10 y300 w260 h15 Center, Made by Aizen
+
+    Gui, MainGui:Show, w280 h320, Sukli Automation v3
+return
+
+; ============================================================
+; GUI BUTTON ACTIONS
 ; ============================================================
 
-; ColorMatch - Checks if two colors match within tolerance
-ColorMatch(color1, color2, tolerance) {
-    r1 := (color1 >> 16) & 0xFF
-    g1 := (color1 >> 8) & 0xFF
-    b1 := color1 & 0xFF
-    
-    r2 := (color2 >> 16) & 0xFF
-    g2 := (color2 >> 8) & 0xFF
-    b2 := color2 & 0xFF
-    
-    diff := Abs(r1 - r2) + Abs(g1 - g2) + Abs(b1 - b2)
-    return (diff <= tolerance * 3)
-}
+StartMacro:
+    Gosub, F2_Action
+return
 
-; UpdateGUI - Updates the status window
-UpdateGUI(status, info, detect := "") {
-    GuiControl,, StatusText, Status: %status%
-    GuiControl,, InfoText, %info%
-    if (detect != "") {
-        GuiControl,, DetectText, %detect%
-    }
-}
+StopMacro:
+    Gosub, F4_Action
+return
 
-; PlaySound - Plays feedback sounds
-PlaySound(freq, duration) {
-    SoundBeep, %freq%, %duration%
-}
+ManualTrigger:
+    Gosub, F5_Action
+return
+
+CalibrateDenom:
+    Gosub, F6_Action
+return
+
+CalibrateColor:
+    Gosub, F7_Action
+return
+
+ShowTotals:
+    Gosub, F9_Action
+return
+
+SelectRoute:
+    Gosub, F1_Action
+return
+
+SettingsMenu:
+    Gosub, SettingsAction
+return
+
+; ============================================================
+; SETTINGS GUI
+; ============================================================
+SettingsAction:
+    Gui, SettingsGui:New, +AlwaysOnTop +ToolWindow, Settings
+    Gui, SettingsGui:Color, 1A2415, 1A2415
+    Gui, SettingsGui:Font, s11 cF1E9D2 bold, Oswald
+    Gui, SettingsGui:Add, Text, x10 y10 w220 h25 Center, Settings
+    
+    Gui, SettingsGui:Font, s9 cC9BE9E, Oswald
+    Gui, SettingsGui:Add, Text, x10 y45 w80 h20, Screen Width:
+    Gui, SettingsGui:Add, Edit, x100 y42 w120 h20 vSettingsWidth, %ScreenWidth%
+    
+    Gui, SettingsGui:Add, Text, x10 y70 w80 h20, Screen Height:
+    Gui, SettingsGui:Add, Edit, x100 y67 w120 h20 vSettingsHeight, %ScreenHeight%
+    
+    Gui, SettingsGui:Add, Text, x10 y95 w80 h20, Detection Color:
+    Gui, SettingsGui:Add, Edit, x100 y92 w120 h20 vSettingsColor, %SukliColor%
+    
+    Gui, SettingsGui:Add, Text, x10 y120 w80 h20, Image Folder:
+    Gui, SettingsGui:Add, Edit, x100 y117 w120 h20 vSettingsImageDir, %ImageDir%
+    
+    Gui, SettingsGui:Font, s10 cFFFFFF, Oswald
+    Gui, SettingsGui:Add, Button, x10 y155 w100 h30 gSettingsSave, Save
+    Gui, SettingsGui:Add, Button, x130 y155 w100 h30 gSettingsClose, Close
+    
+    Gui, SettingsGui:Show, w240 h200, Settings
+return
+
+SettingsSave:
+    Gui, SettingsGui:Submit
+    IniWrite, %SettingsWidth%, %ConfigFile%, Settings, ScreenWidth
+    IniWrite, %SettingsHeight%, %ConfigFile%, Settings, ScreenHeight
+    IniWrite, %SettingsColor%, %ConfigFile%, Settings, SukliColor
+    ScreenWidth := SettingsWidth
+    ScreenHeight := SettingsHeight
+    SukliColor := SettingsColor
+    Gui, SettingsGui:Destroy
+    MsgBox, 64, Success, Settings saved!`nScript will now reload.
+    Sleep, 500
+    Reload
+return
+
+SettingsClose:
+    Gui, SettingsGui:Destroy
+return
 
 ; ============================================================
 ; HOTKEYS
 ; ============================================================
 
-; F1: Select Route
+; F1: Show Main GUI
 F1::
-    InputBox, userRoute, Route Selection, Enter route (Balagtas, Guiguinto, or Malolos):, , 300, 150
-    if ErrorLevel return
-    if (userRoute != "Balagtas" and userRoute != "Guiguinto" and userRoute != "Malolos") {
-        MsgBox, 16, Error, Invalid route!`nChoose: Balagtas, Guiguinto, or Malolos.
-        return
-    }
-    IniWrite, %userRoute%, %ConfigFile%, Settings, Route
-    RouteName := userRoute
-    UpdateGUI("Ready", "Route set to " . RouteName, "Press F2 to start")
-    PlaySound(1000, 150)
+    Gosub, MainGUI
+return
+
+; F1_Action: Select Route
+F1_Action:
+    Gui, RouteGui:New, +AlwaysOnTop +ToolWindow, Select Route
+    Gui, RouteGui:Color, 1A2415, 1A2415
+    Gui, RouteGui:Font, s11 cF1E9D2 bold, Oswald
+    Gui, RouteGui:Add, Text, x10 y10 w180 h25 Center, Select Route
+    Gui, RouteGui:Font, s9 cC9BE9E, Oswald
+    Gui, RouteGui:Add, Text, x10 y40 w180 h20 Center, Choose your route:
+    Gui, RouteGui:Font, s10 cF1E9D2, Oswald
+    Gui, RouteGui:Add, DropDownList, vRouteChoice w180 gRoutePreview, Balagtas|Guiguinto|Malolos
+    Gui, RouteGui:Add, Text, x10 y90 w180 h40 Center vRoutePreviewText, Balagtas: 5 barangays
+    Gui, RouteGui:Font, s10 cFFFFFF, Oswald
+    Gui, RouteGui:Add, Button, x10 y135 w85 h30 gRouteOK, OK
+    Gui, RouteGui:Add, Button, x105 y135 w85 h30 gRouteCancel, Cancel
+    Gui, RouteGui:Show, w200 h180, Select Route
+return
+
+RoutePreview:
+    Gui, RouteGui:Submit, NoHide
+    routeNames := []
+    routeNames["Balagtas"] := "Balagtas: 5 barangays"
+    routeNames["Guiguinto"] := "Guiguinto: 3 barangays"
+    routeNames["Malolos"] := "Malolos: 10 barangays"
+    GuiControl,, RoutePreviewText, % routeNames[RouteChoice]
+return
+
+RouteOK:
+    Gui, RouteGui:Submit
+    IniWrite, %RouteChoice%, %ConfigFile%, Settings, Route
+    RouteName := RouteChoice
+    GuiControl, MainGui:, MainRoute, %RouteName%
+    Gui, RouteGui:Destroy
+    TrayTip, Sukli Automation, Route set to %RouteChoice%, 2
+return
+
+RouteCancel:
+    Gui, RouteGui:Destroy
 return
 
 ; F2: Toggle macro ON/OFF
@@ -178,12 +290,16 @@ F2::
 F2_Action:
     macroRunning := !macroRunning
     if (macroRunning) {
-        UpdateGUI("RUNNING", "Monitoring for sukli screen...", "Route: " . RouteName)
-        PlaySound(1200, 150)
-        SetTimer, CheckSukliScreen, %DetectionInterval%
+        GuiControl, MainGui:, MainStatus, [*] Running
+        GuiControl, MainGui:, MainStartBtn, Running...
+        GuiControl, MainGui:, MainDetect, [..] Monitoring...
+        TrayTip, Sukli Automation, Macro STARTED`nRoute: %RouteName%, 2
+        SetTimer, CheckSukliScreen, 500
     } else {
-        UpdateGUI("STOPPED", "Press F2 to start", "Waiting...")
-        PlaySound(800, 150)
+        GuiControl, MainGui:, MainStatus, [X] Stopped
+        GuiControl, MainGui:, MainStartBtn, Start (F2)
+        GuiControl, MainGui:, MainDetect, [..] Waiting...
+        TrayTip, Sukli Automation, Macro STOPPED, 2
         SetTimer, CheckSukliScreen, Off
     }
 return
@@ -193,13 +309,13 @@ F3::
     WinActivate, %WinTitle%
     WinWaitActive, %WinTitle%,, 3
     if ErrorLevel {
-        MsgBox, 16, Error, Roblox window not found!`nMake sure Roblox is running.
+        MsgBox, 16, Error, Roblox window not found!
         return
     }
     WinMove, %WinTitle%,, 0, 0, %ScreenWidth%, %ScreenHeight%
     WinActivate, %WinTitle%
-    UpdateGUI("Ready", "Roblox resized to " . ScreenWidth . "x" . ScreenHeight, "Press F2 to start")
-    PlaySound(1000, 200)
+    TrayTip, Sukli Automation, Roblox resized to %ScreenWidth%x%ScreenHeight%, 2
+    SoundBeep, 1000, 200
 return
 
 ; F4: Emergency Stop
@@ -207,206 +323,250 @@ F4::
 F4_Action:
     macroRunning := false
     SetTimer, CheckSukliScreen, Off
-    UpdateGUI("STOPPED", "Emergency Stop!", "Press F2 to restart")
-    PlaySound(500, 300)
+    GuiControl, MainGui:, MainStatus, [X] Stopped
+    GuiControl, MainGui:, MainStartBtn, Start (F2)
+    GuiControl, MainGui:, MainDetect, [..] Waiting...
+    TrayTip, Sukli Automation, EMERGENCY STOP!, 2
+    SoundBeep, 500, 300
 return
 
-; ============================================================
-; CALIBRATE - Test and adjust denomination positions
-; ============================================================
-CalibratePositions:
-    UpdateGUI("Calibrating", "Click the ₱50 button...", "Move mouse and press F5")
-    MsgBox, 64, Calibration, Move your mouse over the ₱50 button`nand press F5 to capture its position.
-    
-    Hotkey, F5, CapturePosition, On
-    return
-    
-CapturePosition:
-    Hotkey, F5, Off
-    MouseGetPos, mouseX, mouseY
-    
+; F5: Manual trigger
+F5::
+F5_Action:
     WinGetPos, WinX, WinY, WinW, WinH, %WinTitle%
-    
-    if (WinW > 0 and WinH > 0) {
-        relX := (mouseX - WinX) / WinW
-        relY := (mouseY - WinY) / WinH
-        
-        IniWrite, %relX%, %ConfigFile%, DenomPositions, 50_X
-        IniWrite, %relY%, %ConfigFile%, DenomPositions, 50_Y
-        
-        DenomPositions[50] := { x: relX, y: relY }
-        
-        UpdateGUI("Calibrated", "₱50 position saved", "X: " . Round(relX, 2) . " Y: " . Round(relY, 2))
-        PlaySound(1200, 200)
-        MsgBox, 64, Success, ₱50 button position captured!`nX: %relX%`nY: %relY%
-    }
-return
-
-; ============================================================
-; MAIN LOOP - Checks for Sukli Screen
-; ============================================================
-CheckSukliScreen:
-    if (!macroRunning) {
+    if (WinW = "") {
+        MsgBox, 16, Error, Roblox window not found!
         return
     }
+    SukliScreenDetected(WinX, WinY, WinW, WinH)
+return
+
+; F6: Calibrate denomination positions
+F6::
+F6_Action:
+    WinGetPos, WinX, WinY, WinW, WinH, %WinTitle%
+    if (WinW = "") {
+        MsgBox, 16, Error, Roblox window not found!
+        return
+    }
+    MsgBox, 64, Calibration, For each denomination, hover your mouse over the button in Roblox and press SPACE. Press ESC anytime to cancel.
+
+    cancelled := false
+    for i, denom in Denominations {
+        ToolTip, Hover over the %denom%-peso button, then press SPACE
+        Loop {
+            if (GetKeyState("Escape", "D")) {
+                cancelled := true
+                break
+            }
+            if (GetKeyState("Space", "D")) {
+                MouseGetPos, mx, my
+                relX := (mx - WinX) / WinW
+                relY := (my - WinY) / WinH
+                DenomPositions[denom] := {x: relX, y: relY}
+                IniWrite, %relX%, %ConfigFile%, DenomPositions, %denom%_x
+                IniWrite, %relY%, %ConfigFile%, DenomPositions, %denom%_y
+                SoundBeep, 800, 100
+                Sleep, 300
+                break
+            }
+            Sleep, 50
+        }
+        if (cancelled)
+            break
+    }
+    ToolTip
+    if (cancelled)
+        MsgBox, 48, Cancelled, Calibration cancelled.
+    else
+        MsgBox, 64, Done, Denomination positions saved!
+return
+
+; F7: Calibrate sukli color and position
+F7::
+F7_Action:
+    WinGetPos, WinX, WinY, WinW, WinH, %WinTitle%
+    if (WinW = "") {
+        MsgBox, 16, Error, Roblox window not found!
+        return
+    }
+    MsgBox, 64, Calibration, Hover your mouse over the "Naghihintay ng sukli" text, then press SPACE. Press ESC to cancel.
+    ToolTip, Hover and press SPACE to capture color and position...
+    Loop {
+        if (GetKeyState("Escape", "D")) {
+            ToolTip
+            MsgBox, 48, Cancelled, Calibration cancelled.
+            return
+        }
+        if (GetKeyState("Space", "D")) {
+            MouseGetPos, mx, my
+            PixelGetColor, capturedColor, mx, my, RGB
+            SukliColor := capturedColor
+            SukliCheckRelX := (mx - WinX) / WinW
+            SukliCheckRelY := (my - WinY) / WinH
+            IniWrite, %capturedColor%, %ConfigFile%, Settings, SukliColor
+            IniWrite, %SukliCheckRelX%, %ConfigFile%, Settings, SukliCheckRelX
+            IniWrite, %SukliCheckRelY%, %ConfigFile%, Settings, SukliCheckRelY
+            SoundBeep, 800, 100
+            Sleep, 300
+            break
+        }
+        Sleep, 50
+    }
+    ToolTip
+    MsgBox, 64, Done, Sukli detection calibrated!`nColor: %capturedColor%`nPosition saved.
+return
+
+; F9: Show today's totals
+F9::
+F9_Action:
+    if (!FileExist(LogFile)) {
+        MsgBox, 48, No Data, No transactions logged yet.
+        return
+    }
+    FileRead, logContent, %LogFile%
+    todayStr := A_Year . "-" . A_MM . "-" . A_DD
+    totalFareToday := 0
+    countToday := 0
+    Loop, Parse, logContent, `n
+    {
+        if (A_LoopField = "" or A_Index = 1)
+            continue
+        if (InStr(A_LoopField, todayStr)) {
+            StringSplit, row, A_LoopField, `,
+            totalFareToday += row7
+            countToday++
+        }
+    }
+    
+    ; Show in a nice GUI
+    Gui, TotalsGui:New, +AlwaysOnTop +ToolWindow, Today's Summary
+    Gui, TotalsGui:Color, 1A2415, 1A2415
+    Gui, TotalsGui:Font, s11 cF1E9D2 bold, Oswald
+    Gui, TotalsGui:Add, Text, x10 y10 w200 h25 Center, Today's Summary
+    Gui, TotalsGui:Font, s9 cC9BE9E, Oswald
+    Gui, TotalsGui:Add, Text, x10 y40 w200 h20 Center, Transactions today:
+    Gui, TotalsGui:Font, s14 cF3B22C bold, Anton
+    Gui, TotalsGui:Add, Text, x10 y60 w200 h30 Center, %countToday%
+    Gui, TotalsGui:Font, s9 cC9BE9E, Oswald
+    Gui, TotalsGui:Add, Text, x10 y95 w200 h20 Center, Total fare collected:
+    Gui, TotalsGui:Font, s14 c6FA05B bold, Anton
+    Gui, TotalsGui:Add, Text, x10 y115 w200 h30 Center, Php%totalFareToday%
+    Gui, TotalsGui:Font, s10 cFFFFFF, Oswald
+    Gui, TotalsGui:Add, Button, x10 y155 w200 h30 gTotalsClose, Close
+    Gui, TotalsGui:Show, w220 h200, Today's Summary
+return
+
+TotalsClose:
+    Gui, TotalsGui:Destroy
+return
+
+; ============================================================
+; MAIN LOOP
+; ============================================================
+CheckSukliScreen:
+    if (!macroRunning)
+        return
 
     WinGet, activeID, ID, A
     WinGet, robloxID, ID, %WinTitle%
-    if (activeID != robloxID) {
+    if (activeID != robloxID)
         return
-    }
 
     WinGetPos, WinX, WinY, WinW, WinH, %WinTitle%
-    if (WinW < 100 or WinH < 100) {
+    if (WinW < 100 or WinH < 100)
         return
-    }
 
-    ; ============================================================
-    ; DETECT SUKLI SCREEN (Pixel Color with Tolerance)
-    ; ============================================================
-    ; REPLACE 0xFFFFFF with your actual color
-    SukliCheckX := WinX + Round(WinW * 0.50)
-    SukliCheckY := WinY + Round(WinH * 0.30)
-    PixelGetColor, pixelColor, SukliCheckX, SukliCheckY, RGB
-    
-    if (ColorMatch(pixelColor, SukliColor, ColorTolerance)) {
-        UpdateGUI("DETECTED", "Sukli screen detected!", "Reading passenger info...")
-        PlaySound(1500, 100)
+    SukliCheckX := WinX + Round(WinW * SukliCheckRelX)
+    SukliCheckY := WinY + Round(WinH * SukliCheckRelY)
+    PixelGetColor, pixelColor, %SukliCheckX%, %SukliCheckY%, RGB
+
+    if (pixelColor = SukliColor) {
+        GuiControl, MainGui:, MainDetect, [OK] Sukli Detected!
         SukliScreenDetected(WinX, WinY, WinW, WinH)
-        Sleep, 2000
-    } else {
-        static lastUpdate := 0
-        if (A_TickCount - lastUpdate > 2000) {
-            UpdateGUI("RUNNING", "Waiting for sukli screen...", "Route: " . RouteName)
-            lastUpdate := A_TickCount
-        }
+        GuiControl, MainGui:, MainDetect, [..] Monitoring...
     }
 return
 
 ; ============================================================
-; SUKLI SCREEN DETECTED
+; SUKLI ENTRY FORM (GUI)
 ; ============================================================
 SukliScreenDetected(WinX, WinY, WinW, WinH) {
-    global
-    
-    UpdateGUI("DETECTED", "Processing...", "Looking for reset button")
-    Sleep, 300
-    
-    ; ============================================================
-    ; STEP 1: CLICK RESET BUTTON (Image Detection)
-    ; ============================================================
+    global RouteData, RouteName, ImageDir, g_EntryContext
+
+    ; Click reset button
     ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%reset_arrow.png
     if (ErrorLevel = 0) {
         MouseClick, left, foundX + 10, foundY + 10, 1, 0
         Sleep, 500
-        UpdateGUI("DETECTED", "Reset clicked", "Proceeding...")
-        PlaySound(900, 100)
-    } else {
-        UpdateGUI("DETECTED", "Reset not found", "Proceeding anyway...")
     }
-    
-    ; ============================================================
-    ; STEP 2: DETECT PASSENGER TYPE (Image Detection)
-    ; ============================================================
-    ; Check for Student label first
-    passengerType := "Regular"
-    
-    UpdateGUI("DETECTED", "Detecting passenger type...", "Looking for Student/Senior labels")
-    Sleep, 200
-    
-    ; Search for Student label (English or Tagalog)
-    ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%type_student.png
-    if (ErrorLevel = 0) {
-        passengerType := "Student"
-        UpdateGUI("DETECTED", "Type: Student detected", "Proceeding...")
-        PlaySound(1000, 100)
-        Sleep, 300
-    } else {
-        ; Search for Senior label
-        ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%type_senior.png
-        if (ErrorLevel = 0) {
-            passengerType := "Senior"
-            UpdateGUI("DETECTED", "Type: Senior detected", "Proceeding...")
-            PlaySound(1000, 100)
-            Sleep, 300
-        } else {
-            ; No Student or Senior found = Regular
-            passengerType := "Regular"
-            UpdateGUI("DETECTED", "Type: Regular (default)", "Proceeding...")
-        }
-    }
-    
-    ; ============================================================
-    ; STEP 3: GET PASSENGER DETAILS FROM USER
-    ; ============================================================
-    
-    ; Destination selection
-    MsgBox, 64, Step 1 of 3, Enter Destination:`n1. Bagumbayan/San Jose`n2. Matungao`n3. Panginay Guiguinto`n4. Panginay Balagtas`n5. Wawa`n6. Tuktukan`n7. Maysantol`n8. San Nicolas`n9. Pitpitan`n10. Mambog`n11. Matimbo`n12. Panasahan`n13. Bagna`n14. Atlag`n15. San Juan/Sto. Rosario
-    
-    InputBox, destChoice, Destination, Enter destination number (1-15):, , 200, 150
-    if ErrorLevel {
-        UpdateGUI("CANCELLED", "User cancelled", "Waiting...")
-        return
-    }
-    
-    ; Map destination number to name
-    destMap := []
-    destMap[1] := "Bagumbayan/San Jose"
-    destMap[2] := "Matungao"
-    destMap[3] := "Panginay Guiguinto"
-    destMap[4] := "Panginay Balagtas"
-    destMap[5] := "Wawa"
-    destMap[6] := "Tuktukan"
-    destMap[7] := "Maysantol"
-    destMap[8] := "San Nicolas"
-    destMap[9] := "Pitpitan"
-    destMap[10] := "Mambog"
-    destMap[11] := "Matimbo"
-    destMap[12] := "Panasahan"
-    destMap[13] := "Bagna"
-    destMap[14] := "Atlag"
-    destMap[15] := "San Juan/Sto. Rosario"
-    
-    destination := destMap[destChoice]
-    if (destination = "") {
-        MsgBox, 16, Error, Invalid destination choice!
-        return
-    }
-    UpdateGUI("DETECTED", "Destination: " . destination, "Proceeding...")
-    
-    ; Passenger count
-    InputBox, paxCount, Passenger Count, Enter number of passengers (1-10):, , 200, 150
-    if ErrorLevel return
-    if (paxCount < 1 or paxCount > 10) {
-        MsgBox, 16, Error, Invalid passenger count! (1-10)
-        return
-    }
-    UpdateGUI("DETECTED", "Passengers: " . paxCount, "Proceeding...")
-    
-    ; Show auto-detected type
-    MsgBox, 64, Passenger Type Detected, Auto-detected passenger type: %passengerType%`n`nIf this is incorrect, please check your screenshots in the sukli_images folder.
-    
-    ; Payment amount
-    MsgBox, 64, Step 3 of 3, Enter Payment Amount:`n20, 50, 100, 200, 500, 1000
-    
-    InputBox, payment, Payment, Enter payment amount:, , 200, 150
-    if ErrorLevel return
-    if (payment != "20" and payment != "50" and payment != "100" and payment != "200" and payment != "500" and payment != "1000") {
-        MsgBox, 16, Error, Invalid payment amount!`nUse: 20, 50, 100, 200, 500, or 1000
-        return
-    }
-    UpdateGUI("DETECTED", "Payment: ₱" . payment, "Calculating...")
-    
-    ; ============================================================
-    ; STEP 4: CALCULATE FARE AND SUKLI
-    ; ============================================================
+
     barangays := RouteData[RouteName]
-    if (barangays = "") {
-        MsgBox, 16, Error, Route not found! Check config.
-        return
+    destListStr := ""
+    for i, name in barangays {
+        destListStr .= name . "|"
     }
+
+    g_EntryContext := {WinX: WinX, WinY: WinY, WinW: WinW, WinH: WinH}
+
+    Gui, EntryGui:New, +AlwaysOnTop +ToolWindow, Sukli Entry
+    Gui, EntryGui:Color, 1A2415, 1A2415
+    Gui, EntryGui:Font, s11 cF1E9D2 bold, Oswald
+    Gui, EntryGui:Add, Text, x10 y10 w260 h25 Center, Sukli Entry - %RouteName%
     
-    ; Find the destination index
+    Gui, EntryGui:Font, s9 cC9BE9E, Oswald
+    Gui, EntryGui:Add, Text, x10 y40 w80 h20, Destination:
+    Gui, EntryGui:Font, s10 cF1E9D2, Oswald
+    Gui, EntryGui:Add, DropDownList, vDestChoice w160, %destListStr%
+    
+    Gui, EntryGui:Font, s9 cC9BE9E, Oswald
+    Gui, EntryGui:Add, Text, x10 y70 w80 h20, Passengers:
+    Gui, EntryGui:Font, s10 cF1E9D2, Oswald
+    Gui, EntryGui:Add, Edit, vPaxCount w60 Number, 1
+    Gui, EntryGui:Add, UpDown, Range1-10, 1
+    
+    Gui, EntryGui:Font, s9 cC9BE9E, Oswald
+    Gui, EntryGui:Add, Text, x10 y100 w80 h20, Type:
+    Gui, EntryGui:Font, s10 cF1E9D2, Oswald
+    Gui, EntryGui:Add, Radio, vTypeRegular Checked group x10 y120, Regular
+    Gui, EntryGui:Add, Radio, vTypeStudent x+10, Student
+    Gui, EntryGui:Add, Radio, vTypeSenior x+10, Senior
+    
+    Gui, EntryGui:Font, s9 cC9BE9E, Oswald
+    Gui, EntryGui:Add, Text, x10 y155 w80 h20, Payment:
+    Gui, EntryGui:Font, s10 cF1E9D2, Oswald
+    Gui, EntryGui:Add, DropDownList, vPaymentChoice w100, 20|50|100|200|500|1000
+    
+    Gui, EntryGui:Font, s10 cFFFFFF bold, Oswald
+    Gui, EntryGui:Add, Button, x10 y185 w125 h35 gEntrySubmit, Confirm
+    Gui, EntryGui:Add, Button, x145 y185 w125 h35 gEntryCancel, Cancel
+    
+    Gui, EntryGui:Show, w280 h240, Sukli Entry
+    WinWaitClose, Sukli Entry
+}
+
+EntrySubmit:
+    Gui, EntryGui:Submit
+    Gui, EntryGui:Destroy
+
+    if (TypeStudent = 1)
+        passengerType := "Student"
+    else if (TypeSenior = 1)
+        passengerType := "Senior"
+    else
+        passengerType := "Regular"
+
+    destination := DestChoice
+    paxCount := PaxCount
+    payment := PaymentChoice
+
+    global g_EntryContext, RouteData, RouteName, regularFare, studentFare, seniorFare, extraFare, minUnits, ImageDir, LogFile
+    WinX := g_EntryContext.WinX
+    WinY := g_EntryContext.WinY
+    WinW := g_EntryContext.WinW
+    WinH := g_EntryContext.WinH
+
+    barangays := RouteData[RouteName]
     destIndex := 0
     Loop, % barangays.Length() {
         if (barangays[A_Index] = destination) {
@@ -418,136 +578,107 @@ SukliScreenDetected(WinX, WinY, WinW, WinH) {
         MsgBox, 16, Error, Destination not found on this route!
         return
     }
-    
-    ; Get base fare based on passenger type
-    if (passengerType = "Student") {
+
+    if (passengerType = "Student")
         baseFare := studentFare
-    } else if (passengerType = "Senior") {
+    else if (passengerType = "Senior")
         baseFare := seniorFare
-    } else {
+    else
         baseFare := regularFare
-    }
-    
-    ; Calculate total fare
-    if (destIndex > minUnits) {
-        extra := destIndex - minUnits
-        perPassengerFare := baseFare + (extra * extraFare)
-    } else {
+
+    if (destIndex > minUnits)
+        perPassengerFare := baseFare + ((destIndex - minUnits) * extraFare)
+    else
         perPassengerFare := baseFare
-    }
-    
+
     totalFare := perPassengerFare * paxCount
     sukli := payment - totalFare
-    
+
     if (sukli < 0) {
-        MsgBox, 16, Error, Payment is less than fare!`nFare: ₱%totalFare%`nPayment: ₱%payment%
+        MsgBox, 16, Error, Payment is less than fare!`nFare: Php%totalFare%`nPayment: Php%payment%
         return
     }
-    
-    ; Calculate sukli breakdown
+
     sukliBreakdown := CalculateBreakdown(sukli)
-    
-    ; ============================================================
-    ; STEP 5: SHOW SUMMARY AND CONFIRM
-    ; ============================================================
-    MsgBox, 68, Sukli Automation - Confirm,
+
+    ; Confirmation Dialog
+    MsgBox, 68, Confirm Sukli,
     (LTrim
         Route: %RouteName%
         Destination: %destination% (Unit %destIndex%)
         Passengers: %paxCount%
-        Type: %passengerType% (Auto-detected)
-        Payment: ₱%payment%
-        Total Fare: ₱%totalFare%
-        Sukli: ₱%sukli%
+        Type: %passengerType%
+        Payment: Php%payment%
+        Total Fare: Php%totalFare%
+        Sukli: Php%sukli%
         Breakdown: %sukliBreakdown%
-        Click Order: Highest to lowest
     )
-    
     IfMsgBox, No
         return
-    
-    UpdateGUI("EXECUTING", "Performing sukli...", "Clicking denominations")
-    PlaySound(1000, 200)
-    Sleep, 500
-    
-    ; ============================================================
-    ; STEP 6: PERFORM THE SUKLI
-    ; ============================================================
+
+    ; Perform the sukli
     PerformSukli(WinX, WinY, WinW, WinH, sukliBreakdown)
-    
-    ; ============================================================
-    ; STEP 7: CLICK CHECK BUTTON (Image Detection)
-    ; ============================================================
-    UpdateGUI("EXECUTING", "Clicking check button...", "Almost done!")
-    PlaySound(1200, 150)
-    Sleep, 300
-    
+
+    ; Click check button
     ImageSearch, foundX, foundY, WinX, WinY, WinX+WinW, WinY+WinH, %ImageDir%check_button.png
     if (ErrorLevel = 0) {
         MouseClick, left, foundX + 10, foundY + 10, 1, 0
         Sleep, 500
-        PlaySound(1500, 200)
-        UpdateGUI("COMPLETE", "Sukli complete! ✅", "Ready for next passenger")
-        MsgBox, 64, Success, Sukli completed successfully! ✅
+        SoundBeep, 1000, 200
+        TrayTip, Sukli Automation, Sukli complete!, 3
     } else {
-        UpdateGUI("ERROR", "Check button not found!", "Please click manually")
-        PlaySound(500, 300)
-        MsgBox, 16, Error, Check button not found!`nPlease click it manually.
+        TrayTip, Sukli Automation, Check button not found!`nPlease click manually., 3
     }
-}
+
+    ; Log the transaction
+    FormatTime, ts,, yyyy-MM-dd HH:mm:ss
+    FileAppend, %ts%,%RouteName%,%destination%,%paxCount%,%passengerType%,%payment%,%totalFare%,%sukli%`n, %LogFile%
+    
+    ; Update the GUI with the transaction
+    GuiControl, MainGui:, MainDetect, [OK] Sukli Complete!
+    Sleep, 1000
+    GuiControl, MainGui:, MainDetect, [..] Monitoring...
+return
+
+EntryCancel:
+    Gui, EntryGui:Destroy
+return
 
 ; ============================================================
-; CALCULATE SUKLI BREAKDOWN (Highest to Lowest)
+; FUNCTIONS
 ; ============================================================
+
 CalculateBreakdown(amount) {
     global Denominations
-    
     breakdown := ""
     remaining := amount
-    
-    ; Loop through denominations from highest to lowest
+
     for index, denom in Denominations {
-        count := floor(remaining / denom)
+        count := Floor(remaining / denom)
         if (count > 0) {
-            ; Add this denomination 'count' times to the breakdown
-            loop, %count% {
-                if (breakdown != "") {
+            Loop, %count% {
+                if (breakdown != "")
                     breakdown .= ","
-                }
                 breakdown .= denom
             }
             remaining -= count * denom
         }
     }
-    
     return breakdown
 }
 
-; ============================================================
-; PERFORM SUKLI (Coordinate-Based)
-; ============================================================
 PerformSukli(WinX, WinY, WinW, WinH, breakdown) {
-    global
-    
+    global DenomPositions
     Sleep, 500
-    
-    ; Split the breakdown
     StringSplit, denomArray, breakdown, `,
-    
-    ; Click each denomination in order (already highest to lowest)
-    Loop, % denomArray0 {
+    Loop, %denomArray0% {
         denom := denomArray%A_Index%
-        
-        if DenomPositions.HasKey(denom) {
+        if (DenomPositions.HasKey(denom)) {
             pos := DenomPositions[denom]
             clickX := WinX + Round(WinW * pos.x)
             clickY := WinY + Round(WinH * pos.y)
-            
             MouseClick, left, clickX, clickY, 1, 0
-            PlaySound(800, 50)
             Sleep, 300
-            
-            UpdateGUI("EXECUTING", "Clicked ₱" . denom, "Progress: " . A_Index . "/" . denomArray0)
         }
     }
 }
@@ -561,8 +692,21 @@ Reload:
 return
 
 ; ============================================================
-; GUI CLOSE
+; GUI CLOSE HANDLERS
 ; ============================================================
-GuiClose:
+MainGuiClose:
+    Gui, MainGui:Destroy
     ExitApp
+return
+
+SettingsGuiClose:
+    Gui, SettingsGui:Destroy
+return
+
+RouteGuiClose:
+    Gui, RouteGui:Destroy
+return
+
+TotalsGuiClose:
+    Gui, TotalsGui:Destroy
 return
